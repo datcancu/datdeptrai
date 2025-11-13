@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quiz Phiên Bản 4 – Nâng Cao</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap');
+  body { font-family:'Nunito', sans-serif; background: linear-gradient(135deg, #ffb347, #ffcc33, #33ccff, #9933ff); background-size:400% 400%; animation: gradientBG 15s ease infinite; margin:0; padding:0; color:#333; }
+  @keyframes gradientBG {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+  .container { max-width:1400px; margin:20px auto; background:#fff; padding:20px; border-radius:20px; box-shadow:0 5px 15px rgba(0,0,0,0.3); display:flex; gap:20px;}
+  .quiz-main { flex:1; min-width:400px; }
+  .quiz-sidebar { width:320px; }
+  .sidebar-buttons { display:flex; flex-direction:column; gap:8px; margin-bottom:15px; }
+  .sidebar-buttons button { padding:10px; border:none; border-radius:8px; cursor:pointer; font-weight:600; }
+  h1{text-align:center; margin-bottom:20px; grid-column:1/-1;}
+  .question { margin-bottom:15px; padding:15px; border-radius:10px; border:1px solid #ccc; background:#f9f9f9;}
+  .options button{ display:block; margin:5px 0; padding:8px 12px; width:100%; border:none; border-radius:8px; text-align:left; cursor:pointer; background:#eee; transition:0.3s;}
+  .options button.selected{ background:#fdd835;}
+  .options button.correct{ background:#4caf50; color:#fff;}
+  .options button.wrong{ background:#f44336; color:#fff;}
+  .btn{ padding:10px 20px; margin-top:10px; border:none; border-radius:8px; cursor:pointer; font-weight:600;}
+  .btn-submit{ background:#2196f3; color:#fff;}
+  .btn-mark{ background:#ff9800; color:#fff; float:right;}
+  .timer{ font-size:18px; font-weight:600; margin-bottom:15px; text-align:center;}
+  .navigation{ display:flex; justify-content:space-between; margin-top:15px;}
+  .results{text-align:center; margin-top:20px;}
+  .marked-list{ margin-top:20px;}
+  .question-grid { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; padding:15px; background:#f5f5f5; border-radius:8px; max-height:600px; overflow-y:auto; }
+  .question-grid button { padding:8px; border:2px solid #ddd; border-radius:6px; cursor:pointer; font-weight:600; background:#fff; transition:0.3s; font-size:12px; }
+  .question-grid button:hover { transform:scale(1.05); }
+  .question-grid button.unanswered { background:#eee; color:#999; }
+  .question-grid button.answered { background:#ffeb3b; color:#333; }
+  .question-grid button.finalized { background:#4caf50; color:#fff; }
+  .question-grid button.finalized.correct { background:#4caf50; color:#fff; }
+  .question-grid button.finalized.wrong { background:#f44336; color:#fff; }
+  .question-grid button.current { border-color:#2196f3; border-width:3px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="quiz-main">
+    <h1>Quiz Phiên Bản 4 – Nâng Cao</h1>
+    <div style="text-align:right; margin-bottom:8px;">
+      <button id="soundToggle" class="btn">Âm thanh: Bật</button>
+    </div>
+    <div class="timer" id="timer">Thời gian: 60:00</div>
+    <div class="question" id="questionContainer"></div>
+    <div class="navigation">
+      <button class="btn" id="prevBtn" onclick="prevQuestion()">⟨ Trước</button>
+      <button class="btn" id="chooseBtn" onclick="chooseAnswer()">Chọn đáp án</button>
+      <button class="btn" id="nextBtn" onclick="nextQuestion()">Next ⟩</button>
+    </div>
+    <div class="results" id="results"></div>
+    <div class="marked-list" id="markedList"></div>
+  </div>
+  <div class="quiz-sidebar">
+    <div class="sidebar-buttons">
+      <button class="btn btn-submit" id="submitBtn" onclick="submitQuiz()">Nộp bài</button>
+      <button class="btn" id="resetBtn" onclick="resetQuiz()">Đặt lại</button>
+    </div>
+    <h3 style="margin-top:0;">Danh sách câu hỏi</h3>
+    <div class="question-grid" id="questionGrid"></div>
+  </div>
+</div>
+
+<!-- External audio kept as fallback for older browsers -->
+<audio id="correctSound" src="https://www.soundjay.com/buttons/sounds/button-3.mp3" preload="auto"></audio>
+<audio id="wrongSound" src="https://www.soundjay.com/buttons/sounds/button-10.mp3" preload="auto"></audio>
+
+<script>
+// duplicate quizData removed to avoid redeclaration; the full quizData array is defined later in the file
+
+let currentQ=0;
+let userAnswers=JSON.parse(localStorage.getItem('userAnswers'))||{};
+let markedQuestions=JSON.parse(localStorage.getItem('markedQuestions'))||[];
+let remainingTime=localStorage.getItem('quizTime')?parseInt(localStorage.getItem('quizTime')):3600;
+
+const questionContainer=document.getElementById('questionContainer');
+const timerEl=document.getElementById('timer');
+const resultsEl=document.getElementById('results');
+const markedListEl=document.getElementById('markedList');
+const questionGridEl=document.getElementById('questionGrid');
+const correctSound=document.getElementById('correctSound');
+const wrongSound=document.getElementById('wrongSound');
+const soundToggleBtn = document.getElementById('soundToggle');
+
+// Audio setup: Web Audio API with fallback to <audio>
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+let audioEnabled = localStorage.getItem('audioEnabled')===null ? true : (localStorage.getItem('audioEnabled')==='true');
+
+function updateSoundUI(){ soundToggleBtn.textContent = audioEnabled ? 'Âm thanh: Bật' : 'Âm thanh: Tắt'; }
+updateSoundUI();
+
+function ensureAudioCtx(){ if(!audioCtx && AudioCtx){ try{ audioCtx = new AudioCtx(); }catch(e){ console.warn('Không thể tạo AudioContext:', e); audioCtx = null; } } }
+
+async function resumeAudioCtx(){
+  if(!AudioCtx) return false;
+  ensureAudioCtx();
+  if(!audioCtx) return false;
+  try{ if(audioCtx.state === 'suspended') await audioCtx.resume(); return audioCtx.state === 'running'; }
+  catch(e){ console.warn('Không resume được AudioContext:', e); return false; }
+}
+
+// Resume on first user gesture to satisfy browser autoplay policies
+function onFirstGesture(){ resumeAudioCtx().then(r=>{ if(r) console.log('AudioContext resumed on user gesture'); }); }
+document.addEventListener('click', onFirstGesture, { once: true, capture: true });
+
+soundToggleBtn.addEventListener('click', async ()=>{
+  audioEnabled = !audioEnabled; localStorage.setItem('audioEnabled', audioEnabled);
+  updateSoundUI();
+  if(audioEnabled) await resumeAudioCtx();
+});
+
+function playTone(freq, duration=200, type='sine', volume=0.12){
+  if(!audioEnabled) return;
+  if(AudioCtx){ ensureAudioCtx(); if(!audioCtx) return; try{
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    g.gain.setValueAtTime(volume, audioCtx.currentTime);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + duration/1000);
+  }catch(e){ console.warn('playTone error', e); /* fallback below */ }}
+  else {
+    // no WebAudio
+  }
+}
+
+function playCorrect(){
+  if(!audioEnabled) return;
+  if(AudioCtx && audioCtx){ try{ playTone(660,120,'sine',0.12); setTimeout(()=>playTone(880,140,'sine',0.12),120); return; }catch(e){ console.warn(e); }
+  }
+  try{ if(correctSound){ correctSound.currentTime = 0; correctSound.play().catch(e=>console.warn('fallback correctSound play failed', e)); } }catch(e){ console.warn(e); }
+}
+
+function playWrong(){
+  if(!audioEnabled) return;
+  if(AudioCtx && audioCtx){ try{ playTone(220,240,'sawtooth',0.16); return; }catch(e){ console.warn(e); }
+  }
+  try{ if(wrongSound){ wrongSound.currentTime = 0; wrongSound.play().catch(e=>console.warn('fallback wrongSound play failed', e)); } }catch(e){ console.warn(e); }
+}
+
+const quizData=[
+  {id:1, q:"Mặt trời mọc ở phía nào?", options:["Tây","Đông","Bắc","Nam"], answer:1},
+  {id:2, q:"2 + 2 = ?", options:["3","4","5","6"], answer:1},
+  {id:3, q:"Con chó sủa 'woof' là ngôn ngữ của loài nào?", options:["Chó","Mèo","Chim","Cá"], answer:0},
+  {id:4, q:"Từ tiếng Anh 'book' nghĩa là gì?", options:["Bàn","Sách","Cửa","Cây"], answer:1},
+  {id:5, q:"Số chẵn nhỏ hơn 10 và lớn hơn 6 là?", options:["6","7","8","9"], answer:2},
+
+  {id:6, q:"Thành phố nào là thủ đô của Việt Nam?", options:["Hồ Chí Minh","Đà Nẵng","Hà Nội","Huế"], answer:2},
+  {id:7, q:"Một tam giác có ba cạnh bằng là tam giác gì?", options:["Vuông","Cân","Đều","Nhọn"], answer:2},
+  {id:8, q:"Chất lỏng sôi ở 100°C ở độ cao biển là chất nào?", options:["Nước","Rượu","Dầu","Thủy ngân"], answer:0},
+  {id:9, q:"Từ nào sau đây là động từ (verb)?", options:["Run","Blue","Happy","Quick"], answer:0},
+  {id:10, q:"5 × 6 = ?", options:["11","30","56","35"], answer:1},
+
+  {id:11, q:"Ai phát minh điện thoại (đơn giản)?", options:["Thomas Edison","Alexander Graham Bell","Isaac Newton","Albert Einstein"], answer:1},
+  {id:12, q:"Trái Đất quay quanh vật thể nào?", options:["Mặt Trăng","Mặt Trời","Sao Hỏa","Sao Kim"], answer:1},
+  {id:13, q:"Đơn vị đo khối lượng là gì?", options:["Mét","Giây","Kilôgam","Ampe"], answer:2},
+  {id:14, q:"Từ 'happy' thuộc loại từ nào?", options:["Danh từ","Tính từ","Động từ","Trạng từ"], answer:1},
+  {id:15, q:"Sắp xếp từ bé đến lớn: 2, 11, 5, 3", options:["2,3,5,11","11,5,3,2","5,3,2,11","3,2,5,11"], answer:0},
+
+  {id:16, q:"Xem hình: Có bao nhiêu tam giác trong hình?", image:"https://upload.wikimedia.org/wikipedia/commons/4/4f/Triangle_puzzle.svg", options:["3","4","5","7"], answer:2},
+  {id:17, q:"Xem hình: Đây là quốc kỳ của nước nào?", image:"https://upload.wikimedia.org/wikipedia/commons/2/2b/Flag_of_Japan.svg", options:["Nhật Bản","Hàn Quốc","Trung Quốc","Việt Nam"], answer:0},
+  {id:18, q:"Xem hình: Hình dưới là dạng mê cung — chọn lối đi ngắn nhất", image:"https://upload.wikimedia.org/wikipedia/commons/6/6b/Maze_simple.svg", options:["A","B","C","D"], answer:2},
+
+  {id:19, q:"Tìm số tiếp theo trong dãy: 1, 1, 2, 3, 5, ?", options:["6","7","8","5"], answer:2},
+  {id:20, q:"Trong tiếng Anh, cách chào buổi sáng là?", options:["Good night","Good morning","Goodbye","See you"], answer:1},
+
+  {id:21, q:"Tốc độ ánh sáng xấp xỉ bao nhiêu (trong chân không)?", options:["300000 km/s","30000 km/s","3000 km/s","300 km/s"], answer:0},
+  {id:22, q:"Số pi (π) xấp xỉ bằng?", options:["3.14","2.71","1.62","4.13"], answer:0},
+  {id:23, q:"Chất nào cần thiết cho sự sống: O2 là gì?", options:["Ozon","Oxy","Hydro","Nitơ"], answer:1},
+  {id:24, q:"Trong lịch sử Việt Nam, ngày 2/9/1945 gắn với sự kiện gì?", options:["Ngày Quốc khánh","Ngày Giải phóng","Ngày Thống nhất","Ngày Khai giảng"], answer:0},
+  {id:25, q:"Số chẵn tiếp theo sau 14 là?", options:["15","16","17","18"], answer:1},
+
+  {id:26, q:"Xem hình: Biểu đồ vận tốc-thời gian — diện tích dưới đường cong cho biết gì?", image:"https://upload.wikimedia.org/wikipedia/commons/2/2d/Velocity-time.svg", options:["Vận tốc trung bình","Quãng đường đi được","Gia tốc","Lực"], answer:1},
+  {id:27, q:"Một tam giác có góc vuông là bao nhiêu độ?", options:["45°","90°","60°","30°"], answer:1},
+  {id:28, q:"Trong tiếng Anh, dạng quá khứ của 'go' là?", options:["goed","went","gone","going"], answer:1},
+  {id:29, q:"Đơn vị đo điện áp là gì?", options:["Volt","Ohm","Ampere","Watt"], answer:0},
+  {id:30, q:"Số nguyên tố nhỏ nhất là?", options:["0","1","2","3"], answer:2},
+
+  {id:31, q:"Ai phát minh ra bóng đèn điện (phổ biến trong giáo dục cơ bản)?", options:["Nikola Tesla","Thomas Edison","Guglielmo Marconi","Alexander Bell"], answer:1},
+  {id:32, q:"Xem hình: Hình nào không giống các hình còn lại?", image:"https://upload.wikimedia.org/wikipedia/commons/3/33/Geometric_shapes.svg", options:["Hình A","Hình B","Hình C","Hình D"], answer:1},
+  {id:33, q:"Trong sinh học, cơ quan hô hấp chính của người là?", options:["Tim","Phổi","Gan","Thận"], answer:1},
+  {id:34, q:"Từ 'education' thuộc chủ đề nào?", options:["Kinh tế","Giáo dục","Y tế","Thể thao"], answer:1},
+  {id:35, q:"Số 10 trong hệ nhị phân (binary) là số gì trong hệ thập phân?", options:["2","10","8","4"], answer:0},
+
+  {id:36, q:"Xem hình: Hình nào che khuất hình nào?", image:"https://upload.wikimedia.org/wikipedia/commons/7/72/Overlapping_circles.svg", options:["A che B","B che A","C che A","Không chắc"], answer:0},
+  {id:37, q:"Trong địa lý: nước có diện tích lớn nhất thế giới là?", options:["Mỹ","Canada","Nga","Trung Quốc"], answer:2},
+  {id:38, q:"Đặt dấu thích hợp để biến câu sau thành câu hỏi: 'You are ready' → ?", options:["Are you ready?","You are ready?","Do you ready?","Ready you are?"], answer:0},
+  {id:39, q:"Trong lập trình, vòng lặp dùng để làm gì?", options:["Lưu dữ liệu","Lặp lại hành động","Xóa tệp","Biên dịch mã"], answer:1},
+  {id:40, q:"Xem hình: Có bao nhiêu hình vuông trong hình (đếm tất cả)?", image:"https://upload.wikimedia.org/wikipedia/commons/5/5d/All_squares.svg", options:["6","9","14","20"], answer:2},
+
+  {id:41, q:"Trong toán: 7 × 8 = ?", options:["54","56","58","64"], answer:1},
+  {id:42, q:"Từ 'because' dùng để nối gì trong câu?", options:["Nguyên nhân","Kết quả","Thời gian","Mô tả"], answer:0},
+  {id:43, q:"Nguyên tố hóa học 'H' là gì?", options:["Helium","Hydrogen","Holmium","Hassium"], answer:1},
+  {id:44, q:"Trong lịch sử thế giới, sự kiện nào kết thúc Thế chiến II?", options:["Hiệp ước Versailles","Đầu hàng của Đức và Nhật","Cách mạng Pháp","Sự kiện 11/9"], answer:1},
+  {id:45, q:"Số góc trong một ngũ giác là?", options:["3","4","5","6"], answer:2},
+
+  {id:46, q:"Xem hình: Đoán bước di chuyển để hoàn thành mê cung", image:"https://upload.wikimedia.org/wikipedia/commons/6/6b/Maze_simple.svg", options:["Lên","Xuống","Trái","Phải"], answer:3},
+  {id:47, q:"Xem hình: Biểu tượng này thuộc về quốc gia nào?", image:"https://upload.wikimedia.org/wikipedia/commons/9/9f/Flag_of_Vietnam.svg", options:["Việt Nam","Nhật Bản","Hàn Quốc","Trung Quốc"], answer:0},
+  {id:48, q:"Trong toán, phân số 1/2 bằng bao nhiêu phần trăm?", options:["25%","50%","75%","100%"], answer:1},
+  {id:49, q:"Từ 'listen' và 'silent' có điều thú vị gì?", options:["Giống nhau về nghĩa","Là anagram (đổi chữ) của nhau","Cùng phát âm","Không liên quan"], answer:1},
+  {id:50, q:"Tại sao học suốt đời quan trọng?", options:["Giúp tiến bộ cá nhân và nghề nghiệp","Làm chậm tiến bộ","Tốn thời gian vô ích","Chỉ dành cho học sinh"], answer:0}
+];
+
+function renderQuestion(){
+  const q = quizData[currentQ];
+  questionContainer.innerHTML = `
+    <div><strong>Câu ${q.id}:</strong> ${q.q}</div>
+    ${q.image ? `<div style="text-align:center;"><img src="${q.image}" alt="Hình minh họa" style="max-width:100%;height:auto;border-radius:8px;margin-top:10px;"></div>` : ''}
+    <div class="options">
+      ${q.options.map((opt,i)=>`<button onclick="selectOption(${i},this)">${opt}</button>`).join('')}
+    </div>
+    <button class="btn btn-mark" onclick="toggleMark(${q.id}, this)">⭐ Đánh dấu</button>
+  `;
+  // Hiển thị đáp án đã chọn nếu có
+  if(userAnswers[q.id]!==undefined){
+    const btns = questionContainer.querySelectorAll('.options button');
+    const sel = userAnswers[q.id].selected;
+    if(btns[sel]) btns[sel].classList.add('selected');
+    // If the answer was finalized (chốt đáp án), show correct/wrong and disable changes
+    if(userAnswers[q.id].finalized){
+      btns.forEach((b, i) => {
+        b.disabled = true;
+        if(i === userAnswers[q.id].selected){
+          if(userAnswers[q.id].isCorrect) b.classList.add('correct');
+          else b.classList.add('wrong');
+        }
+        if(i === q.answer) b.classList.add('correct');
+      });
+    } else if(userAnswers[q.id].showCorrect){
+      // Show correct answer for review (after submit)
+      btns.forEach((b, i) => {
+        b.disabled = true;
+        if(i === q.answer) b.classList.add('correct');
+        if(sel !== undefined && i === sel) b.classList.add('selected');
+      });
+    }
+  }
+  // Update question grid
+  updateQuestionGrid();
+}
+
+function selectOption(idx, btn){
+  const qid = quizData[currentQ].id;
+  if(userAnswers[qid] && userAnswers[qid].finalized){
+    alert('Bạn đã chốt đáp án cho câu này, không thể thay đổi.');
+    return;
+  }
+  const buttons = questionContainer.querySelectorAll('.options button');
+  buttons.forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  userAnswers[qid] = userAnswers[qid] || {};
+  userAnswers[qid].selected = idx;
+  localStorage.setItem('userAnswers', JSON.stringify(userAnswers));
+}
+
+function toggleMark(qid, btn){
+  const index = markedQuestions.indexOf(qid);
+  if(index > -1){ markedQuestions.splice(index,1); btn.style.background='#ff9800'; }
+  else { markedQuestions.push(qid); btn.style.background='#ff5722'; }
+  localStorage.setItem('markedQuestions', JSON.stringify(markedQuestions));
+}
+
+function chooseAnswer(){
+  const q = quizData[currentQ];
+  const user = userAnswers[q.id]?.selected;
+  const btns = questionContainer.querySelectorAll('.options button');
+  if(user===undefined){ alert('Hãy chọn một đáp án trước!'); return; }
+  // If already finalized, do nothing
+  if(userAnswers[q.id] && userAnswers[q.id].finalized) return;
+  const isCorrect = user === q.answer;
+  if(isCorrect){ btns[user].classList.add('correct'); playCorrect(); }
+  else { btns[user].classList.add('wrong'); if(btns[q.answer]) btns[q.answer].classList.add('correct'); playWrong(); }
+  // finalize the answer so navigating away won't change scoring
+  userAnswers[q.id] = userAnswers[q.id] || {};
+  userAnswers[q.id].finalized = true;
+  userAnswers[q.id].isCorrect = isCorrect;
+  localStorage.setItem('userAnswers', JSON.stringify(userAnswers));
+  // disable buttons after finalizing
+  btns.forEach(b=>b.disabled = true);
+}
+
+function nextQuestion(){ if(currentQ<quizData.length-1){ currentQ++; renderQuestion(); } }
+
+function prevQuestion(){ if(currentQ>0){ currentQ--; renderQuestion(); } }
+
+function goToQuestion(idx){
+  currentQ = idx;
+  renderQuestion();
+}
+
+function updateQuestionGrid(){
+  let html = '';
+  for(let i = 0; i < quizData.length; i++){
+    const qid = quizData[i].id;
+    const ua = userAnswers[qid];
+    let cssClass = 'unanswered';
+    if(ua && ua.finalized){
+      cssClass = 'finalized';
+      if(ua.isCorrect) cssClass += ' correct';
+      else cssClass += ' wrong';
+    } else if(ua && ua.selected !== undefined) cssClass = 'answered';
+    if(i === currentQ) cssClass += ' current';
+    html += `<button class="${cssClass}" onclick="goToQuestion(${i})">${qid}</button>`;
+  }
+  questionGridEl.innerHTML = html;
+}
+
+function submitQuiz(){
+  if(!confirm('Bạn có chắc muốn nộp bài? Sau khi nộp không thể thay đổi các câu đã chốt.')) return;
+  let score=0;
+  quizData.forEach(q=>{
+    const ua = userAnswers[q.id];
+    if(ua && ua.finalized){
+      if(ua.isCorrect) score++;
+    } else if(ua && ua.selected !== undefined){
+      // count non-finalized selected answers (bôi vàng) as well
+      if(ua.selected === q.answer) score++;
+    }
+  });
+  // Convert to scale of 10
+  const scoreOut10 = (score / quizData.length * 10).toFixed(2);
+  const percent=((score/quizData.length)*100).toFixed(2);
+  // Build results HTML
+  let html = `<h2>Kết quả: ${score}/${quizData.length} câu</h2><h3>Điểm: ${scoreOut10}/10</h3><h3>Chính xác: ${percent}%</h3>`;
+  // Marked questions summary
+  if(markedQuestions.length>0){
+    html += `<h3>Các câu bạn đã đánh dấu (${markedQuestions.length}):</h3><ul>`;
+    markedQuestions.forEach(id=>{
+      const q = quizData.find(x=>x.id===id);
+      const ua = userAnswers[id];
+      html += `<li><strong>Câu ${id}:</strong> ${q? q.q : '(không tìm thấy)'}${ua && ua.selected!==undefined ? ' | Bạn chọn: '+q.options[ua.selected] : ''}${ua && ua.finalized ? (ua.isCorrect? ' | Đã chốt: Đúng' : ' | Đã chốt: Sai') : ''}</li>`;
+    });
+    html += `</ul>`;
+  } else {
+    html += `<p>Bạn không đánh dấu câu nào.</p>`;
+  }
+  resultsEl.innerHTML = html;
+  // Lock the quiz - disable all interactive elements EXCEPT question grid navigation
+  document.getElementById('prevBtn').disabled = true;
+  document.getElementById('nextBtn').disabled = true;
+  document.getElementById('chooseBtn').disabled = true;
+  document.getElementById('submitBtn').disabled = true;
+  document.getElementById('soundToggle').disabled = true;
+  // For all non-finalized answers, show the correct answer
+  quizData.forEach(q => {
+    const ua = userAnswers[q.id];
+    if(!ua || !ua.finalized){
+      // Mark the correct answer in userAnswers for display purposes
+      if(!userAnswers[q.id]) userAnswers[q.id] = {};
+      userAnswers[q.id].showCorrect = true;
+    }
+  });
+  // Disable all option buttons in current question
+  const optionBtns = questionContainer.querySelectorAll('.options button');
+  optionBtns.forEach(b => b.disabled = true);
+  // Re-render to show correct answers
+  renderQuestion();
+  // Note: question grid buttons remain ENABLED so user can review via sidebar
+  // Also populate the marked list area for convenience
+  showMarkedQuestions();
+}
+
+function showMarkedQuestions(){
+  if(markedQuestions.length===0){ markedListEl.innerHTML='Không có câu đã đánh dấu'; return;}
+  let html='<h3>Các câu đã đánh dấu:</h3><ul>';
+  markedQuestions.forEach(id=>{
+    const q=quizData.find(x=>x.id===id);
+    const user=userAnswers[id]?.selected;
+    html+=`<li><strong>Câu ${id}:</strong> ${q.q}<br>Đáp án: ${q.options[q.answer]}${user!==undefined? ' | Bạn chọn: '+q.options[user] : ''}</li>`;
+  });
+  html+='</ul>';
+  markedListEl.innerHTML=html;
+}
+
+function resetQuiz(){
+  if(!confirm('Bạn có chắc muốn đặt lại? Tất cả lựa chọn, chốt và đánh dấu sẽ bị xóa.')) return;
+  // Clear all answers, marks and localStorage
+  userAnswers = {};
+  markedQuestions = [];
+  localStorage.removeItem('userAnswers');
+  localStorage.removeItem('markedQuestions');
+  localStorage.removeItem('quizTime');
+  // Clear results UI
+  resultsEl.innerHTML = '';
+  markedListEl.innerHTML = '';
+  // Reset timer and current question
+  remainingTime = 3600;
+  currentQ = 0;
+  renderQuestion();
+  updateTimer();
+}
+
+function updateTimer(){
+  const min=Math.floor(remainingTime/60);
+  const sec=remainingTime%60;
+  timerEl.textContent=`Thời gian: ${min.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`;
+  if(remainingTime>0){ remainingTime--; localStorage.setItem('quizTime',remainingTime); }
+  else { submitQuiz(); clearInterval(timerInterval); }
+}
+
+renderQuestion();
+const timerInterval=setInterval(updateTimer,1000);
+</script>
+</body>
+</html>
